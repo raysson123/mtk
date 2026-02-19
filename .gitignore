@@ -1,0 +1,40 @@
+# ==========================================
+# CACHE E AMBIENTE PYTHON
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+
+# Ambientes Virtuais e Variáveis (NUNCA SUBIR)
+venv/
+.venv/
+env/
+.env
+
+# ==========================================
+# ARQUIVOS DE SISTEMA OPERACIONAL E IDEs
+# ==========================================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ==========================================
+# DADOS DO SIMULADOR MACHETE (Ignorar BD e Imagens)
+# ==========================================
+# Ignora todas as imagens baixadas
+assets/cards/**/*.jpg
+assets/cards/**/*.png
+assets/cards/**/*.jpeg
+
+# Ignora os JSONs gerados pelo sistema e pelo jogador
+data/profiles/*.json
+data/decks/*.json
+data/cards/**/*.json
+
+# Ignora logs de erro
+*.log
