@@ -1,10 +1,11 @@
 import pygame
 from pathlib import Path
 from APP.UI.screens.base_screens import BaseScreen
-from APP.UI.styles import colors, settings
+from APP.UI.styles import colors
 from APP.UI.styles.fonts import get_fonts
 from APP.UI.components.button import MenuButton
 from APP.UI.components.label import Label
+from APP.UI.layout.grid import LayoutEngine  # Certifique-se de que o grid.py está na pasta layout
 
 class DeckManagerView(BaseScreen):
     def __init__(self, screen, controller, deck_ctrl):
@@ -15,40 +16,34 @@ class DeckManagerView(BaseScreen):
         self.cx = self.screen.get_width() // 2
         self.cy = self.screen.get_height() // 2
         
+        # --- Configurações da Grade ---
+        self.deck_w, self.deck_h = 160, 220  # Tamanho reduzido para caber 12
+        self.area_grid = pygame.Rect(100, 130, self.screen.get_width() - 200, self.screen.get_height() - 280)
+        
         # --- Elementos Fixos ---
-        self.label_titulo = Label("GALERIA DE DECKS", (self.cx, 60), self.fontes['titulo'], colors.ACCENT)
+        self.label_titulo = Label("GALERIA DE DECKS", (self.cx, 50), self.fontes['titulo'], colors.ACCENT)
         
         self.btn_cadastrar = MenuButton(
-            pygame.Rect(self.screen.get_width() - 250, 40, 200, 45), 
-            "NOVO DECK", 
-            self.fontes['menu']
+            pygame.Rect(self.screen.get_width() - 220, 30, 180, 45), 
+            "NOVO DECK", self.fontes['menu']
         )
         
         self.btn_voltar = MenuButton(
-            pygame.Rect(40, self.screen.get_height() - 80, 150, 45), 
-            "VOLTAR", 
-            self.fontes['menu']
+            pygame.Rect(40, self.screen.get_height() - 70, 140, 40), 
+            "VOLTAR", self.fontes['menu']
         )
         
-        # --- Controles do Carrossel Visual ---
-        self.btn_prev = MenuButton(pygame.Rect(self.cx - 240, self.cy + 50, 60, 60), "<", self.fontes['menu'])
-        self.btn_next = MenuButton(pygame.Rect(self.cx + 180, self.cy + 50, 60, 60), ">", self.fontes['menu'])
+        # --- Controles de Paginação (Posicionados nas laterais da grade) ---
+        self.btn_prev = MenuButton(pygame.Rect(20, self.cy - 30, 50, 60), "<", self.fontes['menu'])
+        self.btn_next = MenuButton(pygame.Rect(self.screen.get_width() - 70, self.cy - 30, 50, 60), ">", self.fontes['menu'])
         
-        # Botão de ação principal
-        self.btn_jogar = MenuButton(
-            pygame.Rect(self.cx - 150, self.cy + 240, 300, 55), 
-            "JOGAR COM ESTE DECK", 
-            self.fontes['menu']
-        )
-        
-        self.img_cache_local = {} # Cache para as imagens já salvas no HD
+        self.img_cache_local = {}
 
-        # Força a leitura do profiler.json para atualizar a lista
         if hasattr(self.deck_ctrl, 'reload_data'):
             self.deck_ctrl.reload_data()
 
-    def _get_local_image(self, caminho):
-        """Lê a imagem do HD (pasta assets) e coloca na RAM."""
+    def _get_local_image_small(self, caminho):
+        """Lê e redimensiona a imagem para o tamanho da grade."""
         if not caminho: return None
         if caminho in self.img_cache_local: return self.img_cache_local[caminho]
         
@@ -56,12 +51,11 @@ class DeckManagerView(BaseScreen):
             caminho_fisico = Path(caminho)
             if caminho_fisico.exists():
                 surf = pygame.image.load(str(caminho_fisico))
-                surf = pygame.transform.scale(surf, (280, 390))
+                surf = pygame.transform.smoothscale(surf, (self.deck_w, self.deck_h))
                 self.img_cache_local[caminho] = surf
                 return surf
-        except Exception as e:
-            print(f"Erro ao carregar capa local {caminho}: {e}")
-            
+        except Exception:
+            return None
         return None
 
     def handle_events(self, events):
@@ -69,69 +63,70 @@ class DeckManagerView(BaseScreen):
         self.btn_cadastrar.update(mouse_pos)
         self.btn_voltar.update(mouse_pos)
         
-        tem_decks = len(self.deck_ctrl.decks_disponiveis) > 0
-        
-        if tem_decks:
+        if self.deck_ctrl.total_paginas() > 1:
             self.btn_prev.update(mouse_pos)
             self.btn_next.update(mouse_pos)
-            self.btn_jogar.update(mouse_pos)
 
         for event in events:
             if event.type == pygame.MOUSEBUTTONDOWN:
-                if self.btn_voltar.is_clicked(event):
-                    return "MENU"
+                if self.btn_voltar.is_clicked(event): return "MENU"
+                if self.btn_cadastrar.is_clicked(event): return "DECK_REGISTER"
                 
-                if self.btn_cadastrar.is_clicked(event):
-                    return "DECK_REGISTER"
-                    
-                if tem_decks:
-                    if self.btn_prev.is_clicked(event):
-                        self.deck_ctrl.navegar_decks(-1)
-                    elif self.btn_next.is_clicked(event):
-                        self.deck_ctrl.navegar_decks(1)
-                    elif self.btn_jogar.is_clicked(event):
-                        # Ação de iniciar a partida (No futuro vai retornar "GAME_START")
-                        sucesso = self.deck_ctrl.selecionar_deck_para_jogo()
-                        if sucesso:
-                            print("Iniciando Jogo... (Implementar Tela de Mesa)")
-                            # return "GAME_START" # Descomente quando a tela GameView existir
+                # Paginação
+                if self.btn_prev.is_clicked(event): self.deck_ctrl.mudar_pagina(-1)
+                if self.btn_next.is_clicked(event): self.deck_ctrl.mudar_pagina(1)
+
+                # Clique nos Decks (Detecção de qual deck foi clicado na grade)
+                decks_pagina = self.deck_ctrl.obter_decks_pagina_atual()
+                posicoes = LayoutEngine.get_grid_layout(self.area_grid, len(decks_pagina), self.deck_w, self.deck_h, padding=25)
+                
+                for i, pos in enumerate(posicoes):
+                    rect_deck = pygame.Rect(pos[0], pos[1], self.deck_w, self.deck_h)
+                    if rect_deck.collidepoint(event.pos):
+                        # Calcula o índice global do deck e seleciona
+                        indice_global = (self.deck_ctrl.pagina_atual * self.deck_ctrl.decks_por_pagina) + i
+                        if self.deck_ctrl.selecionar_deck_por_indice_geral(indice_global):
+                            return "GAME_START"
+
         return None
 
     def draw(self):
         self.screen.fill(colors.BG)
         self.label_titulo.draw(self.screen)
-        
         self.btn_cadastrar.draw(self.screen)
         self.btn_voltar.draw(self.screen)
+
+        # 1. Contador de Decks (Topo)
+        total_total = len(self.deck_ctrl.decks_disponiveis)
+        Label(f"COLEÇÃO: {total_total} DECKS", (self.cx, 95), self.fontes['label'], colors.TEXT_SEC).draw(self.screen)
+
+        decks_pagina = self.deck_ctrl.obter_decks_pagina_atual()
         
-        decks = self.deck_ctrl.decks_disponiveis
-        
-        if not decks:
-            Label("Sua coleção está vazia.", (self.cx, self.cy - 30), self.fontes['status'], colors.TEXT_SEC).draw(self.screen)
-            Label("Clique em 'NOVO DECK' para começar.", (self.cx, self.cy + 10), self.fontes['label'], colors.TEXT_PRIMARY).draw(self.screen)
+        if not decks_pagina:
+            Label("Nenhum deck encontrado.", (self.cx, self.cy), self.fontes['status'], colors.TEXT_SEC).draw(self.screen)
         else:
-            deck_atual = self.deck_ctrl.get_deck_atual()
-            if deck_atual:
-                # Desenha o Nome do Deck e do Comandante no topo
-                Label(deck_atual.get('name', 'Sem Nome').upper(), (self.cx, self.cy - 220), self.fontes['titulo'], colors.TEXT_PRIMARY).draw(self.screen)
-                Label(f"Cmd: {deck_atual.get('commander', 'Desconhecido')}", (self.cx, self.cy - 190), self.fontes['label'], colors.ACCENT).draw(self.screen)
+            # 2. Desenha a Grade
+            posicoes = LayoutEngine.get_grid_layout(self.area_grid, len(decks_pagina), self.deck_w, self.deck_h, padding=25)
+            
+            for i, (x, y) in enumerate(posicoes):
+                deck = decks_pagina[i]
+                surf = self._get_local_image_small(deck.get('cover_image_path'))
                 
-                # Desenha a Arte da Capa
-                caminho_arte = deck_atual.get('cover_image_path', '')
-                surf = self._get_local_image(caminho_arte)
+                rect_capa = pygame.Rect(x, y, self.deck_w, self.deck_h)
                 
                 if surf:
-                    rect = surf.get_rect(center=(self.cx, self.cy + 20))
-                    self.screen.blit(surf, rect)
+                    self.screen.blit(surf, rect_capa)
                 else:
-                    # Desenha um quadrado de "Arte não encontrada" se o arquivo deletou do HD
-                    rect_vazio = pygame.Rect(0, 0, 280, 390)
-                    rect_vazio.center = (self.cx, self.cy + 20)
-                    pygame.draw.rect(self.screen, (40, 40, 40), rect_vazio, border_radius=10)
-                    pygame.draw.rect(self.screen, colors.INPUT_BORDER, rect_vazio, 2, border_radius=10)
-                    Label("Arte Indisponível", (self.cx, self.cy + 20), self.fontes['status'], colors.TEXT_SEC).draw(self.screen)
-            
-            # Desenha os botões do carrossel e o botão jogar
-            self.btn_prev.draw(self.screen)
-            self.btn_next.draw(self.screen)
-            self.btn_jogar.draw(self.screen)
+                    pygame.draw.rect(self.screen, (40, 40, 45), rect_capa, border_radius=5)
+                    pygame.draw.rect(self.screen, colors.INPUT_BORDER, rect_capa, 1, border_radius=5)
+                
+                # Nome do deck sob a imagem
+                txt_nome = self.fontes['status'].render(deck['name'][:18], True, colors.TEXT_PRIMARY)
+                self.screen.blit(txt_nome, (x + 5, y + self.deck_h + 5))
+
+            # 3. Contador de Páginas (Rodapé)
+            if self.deck_ctrl.total_paginas() > 1:
+                pag_txt = f"PÁGINA {self.deck_ctrl.pagina_atual + 1} / {self.deck_ctrl.total_paginas()}"
+                Label(pag_txt, (self.cx, self.screen.get_height() - 40), self.fontes['label'], colors.TEXT_SEC).draw(self.screen)
+                self.btn_prev.draw(self.screen)
+                self.btn_next.draw(self.screen)

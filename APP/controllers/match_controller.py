@@ -1,98 +1,105 @@
 from APP.domain.models.match_model import MatchModel
 from APP.domain.models.player_model import PlayerModel
 from APP.domain.services.deck_builder import DeckBuilderService
+from APP.domain.services.rule_engine import RuleEngine
 
 class MatchController:
-    def __init__(self):
+    def __init__(self, ui_manager):
         """
         Orquestrador da Partida.
-        Recebe os inputs da View (cliques) e repassa as ordens para os Modelos (Regras).
+        Conecta a lógica de regras (RuleEngine) com a interface (UIManager).
         """
         self.match_model = None
+        self.ui_manager = ui_manager 
         self.total_players = 2
 
     def setup_game(self, human_deck_data: dict, nickname: str = "Conjurador"):
-        """
-        Inicializa a partida usando a fábrica de decks e os modelos de domínio.
-        """
-        print(f"[CONTROLLER] Preparando mesa para {nickname}...")
+        """Inicializa os modelos de jogo e prepara os grimórios."""
+        print(f"[CONTROLLER] Setup da partida para {nickname}...")
 
-        # 1. Fábrica de Decks: Transforma o JSON bruto em objetos CardModel embaralhados
         deck_p1 = DeckBuilderService.build_from_json(human_deck_data)
-        
-        # Cria o Jogador Humano
-        player_1 = PlayerModel(player_id="P1", name=nickname, deck=deck_p1)
-        
-        # 2. Prepara o Oponente (Bot)
-        # Para testes, estamos clonando os dados do deck do humano para o bot
         deck_p2 = DeckBuilderService.build_from_json(human_deck_data)
+        
+        player_1 = PlayerModel(player_id="P1", name=nickname, deck=deck_p1)
         player_2 = PlayerModel(player_id="P2", name="Oponente 1", deck=deck_p2)
-
-        # 3. Cria a Mesa de Jogo (MatchModel)
+        
         self.match_model = MatchModel(player1=player_1, player2=player_2)
 
-        # 4. Saque Inicial (Regra do Jogo)
-        print("[CONTROLLER] Comprando mãos iniciais (7 cartas)...")
+        # Regras iniciais: Comprar a mão inicial
         player_1.draw_cards(7)
         player_2.draw_cards(7)
         
-        # Para testes: vamos simular que o bot desceu alguns terrenos e criaturas do nada
-        # Só para a sua interface já mostrar coisas do lado dele!
+        # Simulação para testes de interface
         self._simular_mesa_bot(player_2)
+        print(f"[OK] Partida pronta!")
 
-        print(f"[OK] Partida Commander iniciada! Comandante P1: {deck_p1.commander_card.name if deck_p1.commander_card else 'Nenhum'}")
+    def sincronizar_view(self, zonas_view):
+        """Atualiza a posição visual das cartas nas zonas da MatchView."""
+        if self.match_model and self.ui_manager:
+            self.ui_manager.preparar_mesa_inicial(self.match_model, zonas_view)
 
     # =========================================================
-    # AÇÕES DO JOGADOR (Gatilhos vindos da MatchView)
+    # AÇÕES DO JOGADOR (Processamento de Cliques)
     # =========================================================
-    def draw_card(self, player_id: str, amount: int = 1):
-        """Orquestra a compra de carta."""
-        player = self.match_model.players.get(player_id)
-        if player:
-            player.draw_cards(amount)
-            print(f"[AÇÃO] {player.name} comprou {amount} carta(s).")
 
     def play_land(self, player_id: str, hand_index: int):
-        """Orquestra a descida de um terreno."""
         player = self.match_model.players.get(player_id)
-        if player:
-            card = player.play_land(hand_index)
-            if card:
-                print(f"[AÇÃO] {player.name} desceu o terreno: {card.name}")
+        if not player or hand_index >= len(player.hand): return
+
+        card = player.hand[hand_index]
+        permitido, motivo = RuleEngine.validar_descida_terreno(self.match_model, player_id, card)
+        
+        if permitido:
+            player.play_land(hand_index)
+            player.lands_played_this_turn += 1 
+            print(f"[AÇÃO] {player.name} jogou: {card.name}")
+        else:
+            print(f"[BLOQUEADO] {motivo}")
 
     def cast_creature(self, player_id: str, hand_index: int):
-        """Orquestra a conjuração de uma criatura."""
         player = self.match_model.players.get(player_id)
-        if player:
-            # Futuro: Aqui a gente jogaria a carta na Pilha (Stack) primeiro!
-            card = player.cast_creature(hand_index)
-            if card:
-                print(f"[AÇÃO] {player.name} conjurou a criatura: {card.name}")
+        if not player or hand_index >= len(player.hand): return
 
+        card = player.hand[hand_index]
+        permitido, motivo = RuleEngine.validar_conjuracao(self.match_model, player_id, card)
+        
+        if permitido:
+            player.cast_creature(hand_index)
+            print(f"[AÇÃO] {player.name} conjurou: {card.name}")
+        else:
+            print(f"[BLOQUEADO] {motivo}")
+
+    # --- MÉTODO CORRIGIDO (O QUE ESTAVA FALTANDO) ---
     def cast_other(self, player_id: str, hand_index: int):
-        """Orquestra a conjuração de artefatos/encantamentos."""
+        """Gerencia a conjuração de Artefatos, Feitiços e Encantamentos."""
         player = self.match_model.players.get(player_id)
-        if player:
-            card = player.cast_other(hand_index)
-            if card:
-                print(f"[AÇÃO] {player.name} conjurou: {card.name}")
+        if not player or hand_index >= len(player.hand): return
+
+        card = player.hand[hand_index]
+        # Valida se tem mana e se está na fase principal
+        permitido, motivo = RuleEngine.validar_conjuracao(self.match_model, player_id, card)
+        
+        if permitido:
+            # Move para o campo (se for permanente) ou cemitério (se for feitiço)
+            player.cast_other(hand_index)
+            print(f"[AÇÃO] {player.name} usou: {card.name}")
+        else:
+            print(f"[BLOQUEADO] {motivo}")
+
+    def next_phase(self):
+        """Avança o ponteiro de fases do MatchModel."""
+        self.match_model.next_phase()
+        print(f"[TURNO] Fase: {self.match_model.phase}")
 
     def mudar_vida(self, player_id: str, quantidade: int):
-        """Altera a vida de um jogador."""
+        """Interface manual para ajuste de vida."""
         player = self.match_model.players.get(player_id)
         if player:
-            if quantidade > 0:
-                player.gain_life(quantidade)
-            else:
-                player.take_damage(abs(quantidade))
-            print(f"[STATUS] {player.name} agora tem {player.life} PV.")
+            if quantidade > 0: player.gain_life(quantidade)
+            else: player.take_damage(abs(quantidade))
 
-    # =========================================================
-    # FUNÇÃO TEMPORÁRIA DE DEBUG / TESTE VISUAL
-    # =========================================================
     def _simular_mesa_bot(self, bot: PlayerModel):
-        """Puxa algumas cartas da mão do bot para a mesa só para testar a renderização da View."""
+        """Simula bot baixando cartas para testar renderização."""
         if len(bot.hand) >= 3:
-            bot.battlefield_lands.append(bot.hand.pop())
             bot.battlefield_lands.append(bot.hand.pop())
             bot.battlefield_creatures.append(bot.hand.pop())

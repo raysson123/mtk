@@ -4,195 +4,165 @@ from APP.UI.styles.colors import BG, TEXT_PRIMARY, TEXT_SEC
 from APP.UI.styles.fonts import get_fonts
 from APP.UI.components.card_ui import CardUI
 from APP.UI.components.zone_ui import ZoneUI
+from APP.UI.layout.grid import LayoutEngine
 
 class MatchView(BaseScreen):
     def __init__(self, screen, controller, asset_manager): 
         """
-        Visualização da Partida orquestrando os componentes ZoneUI e CardUI.
+        Visualização da Mesa de Jogo.
+        Gerencia o layout das zonas e a interação com a mão do jogador.
         """
         super().__init__(screen, controller)
         self.asset_manager = asset_manager 
-        
         self.largura, self.altura = self.screen.get_size()
         self.fontes = get_fonts()
-        
         self.match = self.controller.match_model
         
-        self.card_w = 70
-        self.card_h = 100
+        # Configurações de tamanho das cartas
+        self.card_w = 75
+        self.card_h = 105
         
-        # 1. Dicionário para guardar as Zonas de Jogo instanciadas
+        # Estrutura de Zonas de UI
         self.zonas = {}
-        
-        # 2. Inicializa as zonas uma única vez para evitar sobrecarga
         self._inicializar_zonas()
 
-        # Lista de componentes das cartas na Mão (para checar cliques)
+        # Cache local para componentes da mão
         self.mao_ui = []
 
     def _inicializar_zonas(self):
-        """Cria os componentes ZoneUI para cada jogador, com seus layouts."""
-        jogadores_ids = list(self.match.players.keys())
-        qtd_jogadores = len(jogadores_ids)
-        
-        for index, p_id in enumerate(jogadores_ids):
-            id_visual = index + 1
-            rect_area = self._get_area_jogador(id_visual, qtd_jogadores)
+        """Define onde cada zona (Campo, Mana, Cemitério) fica na tela."""
+        for p_id in self.match.players.keys():
+            # Define se é a parte de cima ou de baixo da tela
+            id_visual = 1 if p_id == "P1" else 2
+            rect_area = self._get_area_jogador(id_visual, 2)
             
-            w_zona = rect_area.width * 0.22
-            h_top = rect_area.height * 0.45
+            col_w = rect_area.width * 0.18
             
-            # --- Instancia as Zonas para este jogador ---
-            # 1. Comandante (Layout: Stack)
-            r_cmd = pygame.Rect(rect_area.x + 5, rect_area.y + 35, w_zona - 10, h_top - 40)
-            z_cmd = ZoneUI(r_cmd, "COMANDANTE", (45, 45, 70), "stack")
+            # 1. Zona de Comandante
+            z_cmd = ZoneUI(pygame.Rect(rect_area.x + 10, rect_area.y + 45, col_w, rect_area.height * 0.38), 
+                           "COMANDANTE", (45, 45, 70), "stack")
             
-            # 2. Mana/Terrenos (Layout: Overlap/Cascata)
-            r_mana = pygame.Rect(rect_area.x + 5, rect_area.bottom - (rect_area.height * 0.35), w_zona - 10, (rect_area.height * 0.35) - 10)
-            z_mana = ZoneUI(r_mana, "MANA", (30, 50, 30), "overlap")
+            # 2. Zona de Mana/Terrenos
+            z_mana = ZoneUI(pygame.Rect(rect_area.x + 10, z_cmd.rect.bottom + 10, col_w, rect_area.height * 0.38), 
+                            "MANA", (30, 50, 30), "overlap")
             
-            # 3. Cemitério (Layout: Stack)
-            r_grave = pygame.Rect(rect_area.right - w_zona + 5, rect_area.y + 35, w_zona - 10, h_top - 40)
-            z_grave = ZoneUI(r_grave, "CEMITÉRIO", (40, 30, 30), "stack")
+            # 3. Cemitério
+            z_grave = ZoneUI(pygame.Rect(rect_area.right - col_w - 10, rect_area.y + 45, col_w, rect_area.height * 0.38), 
+                             "CEMITÉRIO", (40, 30, 30), "stack")
             
-            # 4. Campo de Batalha Principal (Criaturas - Layout: Grid)
-            r_battle = pygame.Rect(r_cmd.right + 10, rect_area.y + 35, rect_area.width - (w_zona * 2) - 20, h_top - 40)
-            z_battle = ZoneUI(r_battle, "CAMPO DE BATALHA", (40, 45, 40), "grid")
+            # 4. Exílio
+            z_exile = ZoneUI(pygame.Rect(rect_area.right - col_w - 10, z_grave.rect.bottom + 10, col_w, rect_area.height * 0.38), 
+                             "EXÍLIO", (30, 45, 45), "stack")
+            
+            # 5. Campo de Batalha (Centro)
+            battle_w = rect_area.width - (col_w * 2) - 50
+            z_battle = ZoneUI(pygame.Rect(z_cmd.rect.right + 15, rect_area.y + 45, battle_w, rect_area.height * 0.82), 
+                              "CAMPO", (40, 45, 40), "grid")
 
             self.zonas[p_id] = {
                 "COMANDANTE": z_cmd,
                 "MANA": z_mana,
                 "CEMITERIO": z_grave,
+                "EXILIO": z_exile,
                 "CAMPO": z_battle
             }
 
     def _get_area_jogador(self, id_visual, qtd):
+        """Divide a tela ao meio: P2 em cima, P1 em baixo."""
         w, h = self.largura, self.altura
-        if qtd <= 2:
-            if id_visual == 2: return pygame.Rect(0, 0, w, h // 2)      
-            if id_visual == 1: return pygame.Rect(0, h // 2, w, h // 2) 
-        return pygame.Rect(0, 0, w, h)
+        if id_visual == 2: return pygame.Rect(0, 0, w, h // 2)      
+        return pygame.Rect(0, h // 2, w, h // 2)
 
     def handle_events(self, events):
         mouse_pos = pygame.mouse.get_pos()
         
-        # Atualiza os componentes visuais da mão
+        # Atualiza estado de hover das cartas na mão
         for card_ui in self.mao_ui:
             card_ui.update(mouse_pos)
 
         for event in events:
-            if event.type == pygame.QUIT:
-                return "SAIR"
-                
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    return "MENU"
-                if event.key == pygame.K_d:
-                    self.controller.draw_card("P1", 1) 
-
-            # NOVO: Lógica de clique baseada no CardUI
+            if event.type == pygame.QUIT: return "SAIR"
+            
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                # Clique na mão do Jogador 1 (Humano)
                 for i, card_ui in enumerate(self.mao_ui):
                     if card_ui.is_clicked(event):
-                        card = card_ui.card
-                        if card.is_land:
-                            self.controller.play_land("P1", i)
-                        elif card.is_creature:
-                            self.controller.cast_creature("P1", i)
-                        else:
-                            self.controller.cast_other("P1", i)
-                        break # Se clicou numa carta, não precisa testar as outras
-                        
+                        self._processar_clique_mao(card_ui.card, i)
+                        break
+                
+                # Clique em cartas que já estão nas zonas (Campo/Mana)
+                for zona_ui in self.zonas["P1"].values():
+                    for card_ui in zona_ui.cards_ui:
+                        if card_ui.is_clicked(event):
+                            # Se clicar no campo, chama a ação de Tap/Ativar no controller
+                            if hasattr(self.controller, 'processar_clique_campo'):
+                                self.controller.processar_clique_campo("P1", card_ui.card)
         return None
 
+    def _processar_clique_mao(self, card, index):
+        """Identifica o tipo de carta e envia a ação correta para o controlador."""
+        if card.is_land:
+            self.controller.play_land("P1", index)
+        elif card.is_creature:
+            self.controller.cast_creature("P1", index)
+        else:
+            # Garante que o MatchController tenha o método cast_other
+            self.controller.cast_other("P1", index)
+
     def draw(self):
+        """Renderiza o frame completo da partida."""
         self.screen.fill(BG)
         
-        jogadores_ids = list(self.match.players.keys())
-        qtd_jogadores = len(jogadores_ids)
-        
-        for index, p_id in enumerate(jogadores_ids):
-            id_visual = index + 1 
-            self._atualizar_e_desenhar_jogador(p_id, id_visual, qtd_jogadores)
+        # 1. SINCRONIZAÇÃO: O Controller pede para o UIManager atualizar as listas de CardUI
+        self.controller.sincronizar_view(self.zonas)
 
-    def _atualizar_e_desenhar_jogador(self, p_id_banco, id_visual, qtd_jogadores):
-        player = self.match.players[p_id_banco]
-        eh_humano = (id_visual == 1)
-        rect_area = self._get_area_jogador(id_visual, qtd_jogadores)
+        # 2. RENDERIZAÇÃO POR JOGADOR
+        for p_id in self.match.players.keys():
+            self._desenhar_mesa_jogador(p_id)
 
-        # 1. Desenha o fundo da área do jogador
-        cor_fundo = (30, 30, 45) if eh_humano else (25, 25, 35)
+    def _desenhar_mesa_jogador(self, p_id):
+        player = self.match.players[p_id]
+        id_visual = 1 if p_id == "P1" else 2
+        rect_area = self._get_area_jogador(id_visual, 2)
+        eh_humano = (p_id == "P1")
+
+        # Fundo e moldura da área do jogador
+        cor_fundo = (35, 35, 50) if eh_humano else (25, 25, 35)
         pygame.draw.rect(self.screen, cor_fundo, rect_area)
-        pygame.draw.rect(self.screen, (100, 100, 120), rect_area, 2) 
-
-        # 2. Informações de Vida
-        info_txt = f"{player.name} | {player.life} PV"
-        txt = self.fontes['label'].render(info_txt, True, TEXT_PRIMARY)
-        self.screen.blit(txt, (rect_area.centerx - txt.get_width()//2, rect_area.y + 5))
-
-        # 3. Pega as zonas deste jogador
-        zonas_do_jogador = self.zonas[p_id_banco]
-
-        # 4. Sincroniza os Modelos (CardModel) com as Zonas (CardUI)
+        pygame.draw.rect(self.screen, (100, 100, 120), rect_area, 2)
         
-        # --- COMANDANTE ---
-        zonas_do_jogador["COMANDANTE"].clear_cards()
-        if player.deck.commander_card:
-            card_ui = CardUI(player.deck.commander_card, self.asset_manager, 0, 0, 50, 70)
-            zonas_do_jogador["COMANDANTE"].add_card_ui(card_ui)
-        zonas_do_jogador["COMANDANTE"].draw(self.screen)
+        # Barra de Status (Nome e Vida)
+        status_txt = f"{player.name.upper()} | {player.life} PV"
+        surf = self.fontes['label'].render(status_txt, True, TEXT_PRIMARY)
+        self.screen.blit(surf, (rect_area.centerx - surf.get_width()//2, rect_area.y + 10))
 
-        # --- MANA/TERRENOS ---
-        zonas_do_jogador["MANA"].clear_cards()
-        for land_card in player.battlefield_lands:
-            card_ui = CardUI(land_card, self.asset_manager, 0, 0, 40, 56)
-            zonas_do_jogador["MANA"].add_card_ui(card_ui)
-        zonas_do_jogador["MANA"].draw(self.screen)
+        # Desenha as Zonas Populadas
+        for zona_ui in self.zonas[p_id].values():
+            zona_ui.draw(self.screen)
 
-        # --- CEMITÉRIO ---
-        zonas_do_jogador["CEMITERIO"].clear_cards()
-        if player.graveyard:
-            card_ui = CardUI(player.graveyard[-1], self.asset_manager, 0, 0, 50, 70)
-            zonas_do_jogador["CEMITERIO"].add_card_ui(card_ui)
-        zonas_do_jogador["CEMITERIO"].draw(self.screen)
-        
-        # --- CAMPO DE BATALHA ---
-        zonas_do_jogador["CAMPO"].clear_cards()
-        for creature in player.battlefield_creatures:
-            card_ui = CardUI(creature, self.asset_manager, 0, 0, 50, 70)
-            zonas_do_jogador["CAMPO"].add_card_ui(card_ui)
-        zonas_do_jogador["CAMPO"].draw(self.screen)
-
-        # 5. Renderiza a Mão
+        # Renderiza a Mão
         if eh_humano:
             self._renderizar_mao(player.hand, rect_area)
         else:
-            txt_mao = self.fontes['label'].render(f"Cartas na Mão: {len(player.hand)}", True, TEXT_SEC)
-            self.screen.blit(txt_mao, (rect_area.centerx - txt_mao.get_width()//2, rect_area.bottom - 40))
+            # Oponente mostra apenas contagem de cartas
+            txt_mao = self.fontes['label'].render(f"Mão: {len(player.hand)} cartas", True, TEXT_SEC)
+            self.screen.blit(txt_mao, (rect_area.centerx - txt_mao.get_width()//2, rect_area.bottom - 35))
 
     def _renderizar_mao(self, hand_models, rect_area):
-        qtd = len(hand_models)
-        if qtd == 0: 
-            self.mao_ui.clear()
-            return
-
-        espacamento = 5
-        largura_total_mao = qtd * (self.card_w + espacamento)
-        
-        if largura_total_mao > rect_area.width * 0.7:
-            espacamento = - (largura_total_mao - rect_area.width * 0.7) // qtd
-
-        start_x = rect_area.centerx - (largura_total_mao // 2)
-        y = rect_area.bottom - self.card_h - 15
-
-        # Recria a lista de UI da mão para refletir as posições atuais
+        """Calcula posições e desenha as cartas na mão do jogador humano."""
+        posicoes = LayoutEngine.get_hand_layout(rect_area, len(hand_models), self.card_w, self.card_h)
         self.mao_ui.clear()
         
-        for i, card_obj in enumerate(hand_models):
-            x = start_x + (i * (self.card_w + espacamento))
+        for i, (x, y) in enumerate(posicoes):
+            model = hand_models[i]
+            card_id = id(model)
             
-            card_ui = CardUI(card_obj, self.asset_manager, x, y, self.card_w, self.card_h)
+            # Busca no cache do UIManager para não recarregar a imagem todo frame
+            if card_id not in self.controller.ui_manager.ui_cards_cache:
+                new_card = CardUI(model, self.asset_manager, x, y, self.card_w, self.card_h)
+                self.controller.ui_manager.ui_cards_cache[card_id] = new_card
+            
+            card_ui = self.controller.ui_manager.ui_cards_cache[card_id]
+            card_ui.update_position(x, y)
             self.mao_ui.append(card_ui)
-            
-            # Desenha com os highlights dinâmicos do CardUI
             card_ui.draw(self.screen)

@@ -4,10 +4,10 @@ from APP.UI.styles.fonts import get_fonts
 from APP.domain.models.card_model import CardModel
 
 class CardUI:
-    def __init__(self, card_model: CardModel, asset_manager, x: int, y: int, w: int = 70, h: int = 100):
+    def __init__(self, card_model: CardModel, asset_manager, x: int, y: int, w: int = 75, h: int = 105):
         """
         Componente Visual da Carta. 
-        Junta a regra de negócio (CardModel) com a renderização (Pygame).
+        Agora corrigido para usar caminhos diretos e evitar TypeError.
         """
         self.card = card_model
         self.asset_manager = asset_manager
@@ -15,82 +15,80 @@ class CardUI:
         self.fontes = get_fonts()
         
         self.is_hovered = False
-        
-        # Cache visual próprio do componente
         self._img_surface = None
+        self._img_tapped = None 
 
     def update_position(self, x: int, y: int):
-        """Atualiza a posição da carta (Útil para animações ou reorganizar a mão)."""
         self.rect.x = x
         self.rect.y = y
 
     def update(self, mouse_pos):
-        """Checa se o mouse está em cima da carta para dar aquele efeito visual."""
         self.is_hovered = self.rect.collidepoint(mouse_pos)
 
     def is_clicked(self, event):
-        """Verifica se o botão esquerdo do mouse clicou nesta carta."""
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             return self.is_hovered
         return False
 
-    def _get_category(self):
-        """Helper para a pasta de assets."""
-        tipo = self.card.type_line or ""
-        if "Creature" in tipo: return "Criaturas"
-        if "Land" in tipo: return "Terrenos"
-        if "Instant" in tipo: return "Instantes"
-        if "Sorcery" in tipo: return "Feiticos"
-        if "Enchantment" in tipo: return "Encantamentos"
-        if "Artifact" in tipo: return "Artefatos"
-        return "Outros"
-
     def draw(self, screen):
-        """Renderiza a carta na tela com todas as firulas visuais."""
-        # 1. Tenta carregar a imagem real
+        """Renderiza a carta com suporte a imagens reais e fallback visual."""
+        
+        # 1. Tenta carregar a imagem real se o cache estiver vazio
         if self._img_surface is None:
-            categoria = self._get_category()
-            img_bruta = self.asset_manager.get_card_image(self.card.name, category=categoria)
-            if img_bruta:
-                self._img_surface = pygame.transform.smoothscale(img_bruta, (self.rect.width, self.rect.height))
-
-        # 2. Desenha a Imagem ou o Fallback
-        if self._img_surface:
-            screen.blit(self._img_surface, self.rect.topleft)
-        else:
-            # Arte não encontrada no HD
-            cor_bg = (150, 200, 150) if self.card.is_land else (200, 200, 180)
-            pygame.draw.rect(screen, cor_bg, self.rect, border_radius=4)
+            # PULO DO GATO: Pegamos o caminho direto que o seu JSON já tem
+            caminho_direto = self.card.local_image_path
             
-            txt_nome = self.fontes['status'].render(self.card.name[:8], True, (0, 0, 0))
-            screen.blit(txt_nome, (self.rect.x + 2, self.rect.y + 2))
+            # CHAMADA CORRIGIDA: Removemos o 'category=categoria' 
+            # para bater com a nova assinatura do AssetManager.get_card_image(self, local_path)
+            img_bruta = self.asset_manager.get_card_image(caminho_direto)
+            
+            if img_bruta:
+                # Otimização: Escala para a memória RAM uma única vez
+                self._img_surface = pygame.transform.smoothscale(img_bruta, (self.rect.width, self.rect.height))
+                self._img_tapped = pygame.transform.rotate(self._img_surface, -90)
+            else:
+                # FALLBACK: Se a imagem física não existir, desenha o card colorido
+                self._img_surface = pygame.Surface((self.rect.width, self.rect.height), pygame.SRCALPHA)
+                cor = (40, 80, 40) if self.card.is_land else (40, 40, 70)
+                pygame.draw.rect(self._img_surface, cor, self._img_surface.get_rect(), border_radius=5)
+                
+                # Escreve o nome da carta para você saber quem ela é
+                txt_nome = self.fontes['status'].render(self.card.name[:12], True, (255, 255, 255))
+                self._img_surface.blit(txt_nome, (5, 5))
 
-        # 3. Efeito de Carta Virada (Tapped)
-        if self.card.is_tapped:
-            overlay = pygame.Surface((self.rect.width, self.rect.height), pygame.SRCALPHA)
-            overlay.fill((0, 0, 0, 150)) # Escurece a carta
-            screen.blit(overlay, self.rect.topleft)
-            # Dica visual de que está virada
-            txt_tap = self.fontes['status'].render("TAPPED", True, (255, 100, 100))
-            screen.blit(txt_tap, (self.rect.centerx - txt_tap.get_width()//2, self.rect.centery))
+        # 2. Define o frame de desenho baseado no estado (Virada ou Não)
+        imagem_final = self._img_tapped if self.card.is_tapped and self._img_tapped else self._img_surface
+        pos_desenho = imagem_final.get_rect(center=self.rect.center)
 
-        # 4. Bordas e Destaques (Hover e Terrenos)
-        borda_cor = (0, 0, 0)
-        borda_espessura = 1
+        # 3. Sombra de Elevação no Hover
+        if self.is_hovered:
+            sombra_rect = pos_desenho.move(4, 4)
+            pygame.draw.rect(screen, (0, 0, 0, 80), sombra_rect, border_radius=5)
+
+        # 4. Desenha a Imagem Principal
+        screen.blit(imagem_final, pos_desenho.topleft)
+
+        # 5. Bordas e Destaques Dinâmicos
+        borda_cor = colors.TEXT_SEC
+        borda_w = 1
 
         if self.is_hovered:
-            borda_cor = colors.ACCENT # Brilha quando passa o mouse
-            borda_espessura = 3
-        elif self.card.is_land:
-            borda_cor = (50, 200, 50) # Highlight permanente para terrenos na mão
+            borda_cor = colors.ACCENT
+            borda_w = 3
+        elif self.card.is_land and not self.card.is_tapped:
+            borda_cor = (0, 255, 0) # Brilho verde para terrenos prontos
 
-        pygame.draw.rect(screen, borda_cor, self.rect, borda_espessura, border_radius=4)
+        pygame.draw.rect(screen, borda_cor, pos_desenho, borda_w, border_radius=5)
 
-        # 5. Marcadores (Counters)
+        # 6. Renderiza os Marcadores
         if self.card.counters:
-            cy = self.rect.bottom - 15
-            for tipo, qtd in self.card.counters.items():
-                pygame.draw.circle(screen, (200, 50, 50), (self.rect.right - 15, cy), 10)
-                txt_cnt = self.fontes['status'].render(str(qtd), True, (255, 255, 255))
-                screen.blit(txt_cnt, (self.rect.right - 19, cy - 6))
-                cy -= 22
+            self._draw_counters(screen, pos_desenho)
+
+    def _draw_counters(self, screen, draw_rect):
+        """Desenha bolinhas de marcadores no canto inferior."""
+        count_pos = [draw_rect.right - 12, draw_rect.bottom - 12]
+        for tipo, qtd in self.card.counters.items():
+            pygame.draw.circle(screen, (220, 20, 20), count_pos, 10)
+            txt = self.fontes['status'].render(str(qtd), True, (255, 255, 255))
+            screen.blit(txt, (count_pos[0] - 5, count_pos[1] - 8))
+            count_pos[1] -= 22
